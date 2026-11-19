@@ -1,9 +1,11 @@
 import time
 import board
+import busio
 import digitalio
 import usb_hid
 import usb_cdc
 import rtc
+import adafruit_ssd1306
 
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
@@ -22,6 +24,16 @@ button14.switch_to_input(pull=digitalio.Pull.UP)
 button15 = digitalio.DigitalInOut(board.GP15)
 button15.switch_to_input(pull=digitalio.Pull.UP)
 
+i2c = busio.I2C(
+    scl=board.GP5,
+    sda=board.GP4,
+    frequency=100_000
+)
+
+display = adafruit_ssd1306.SSD1306_I2C(
+    128, 64, i2c, addr=0x3C
+)
+
 mouse_device = None
 
 for device in usb_hid.devices:
@@ -31,32 +43,80 @@ for device in usb_hid.devices:
 
 if mouse_device is None:
     raise RuntimeError(
-        "Brak myszy HID. Sprawdz boot.py i odlacz/podlacz USB."
+        "Brak myszy HID. Sprawdz boot.py i restart USB."
     )
 
 report = bytearray(5)
 time_buffer = bytearray()
 
+time_synced = False
+last_position = "---"
+status = "Gotowy"
+
 
 def move_to(x, y):
+    global last_position, status
+
     x = max(0, min(SCREEN_WIDTH - 1, int(x)))
     y = max(0, min(SCREEN_HEIGHT - 1, int(y)))
 
     hid_x = round(x * 32767 / (SCREEN_WIDTH - 1))
     hid_y = round(y * 32767 / (SCREEN_HEIGHT - 1))
 
-    report[0] = 0  # Wszystkie przyciski myszy zwolnione.
+    last_position = "{},{}".format(x, y)
+    status = "Wysylam..."
+
+    report[0] = 0
     report[1] = hid_x & 0xFF
     report[2] = (hid_x >> 8) & 0xFF
     report[3] = hid_y & 0xFF
     report[4] = (hid_y >> 8) & 0xFF
 
     mouse_device.send_report(report, report_id=REPORT_ID)
-    print("Pozycja docelowa: X =", x, "Y =", y)
 
+    status = "Ruch wyslany"
+
+
+def click_left():
+    global status
+
+    report[0] = 0x01
+    report[1] = 0
+    report[2] = 0
+    report[3] = 0
+    report[4] = 0
+
+    mouse_device.send_report(report, report_id=REPORT_ID)
+    time.sleep(0.05)
+
+    report[0] = 0
+    mouse_device.send_report(report, report_id=REPORT_ID)
+
+    status = "Klik lewy"
+    print("Klik lewy wykonany")
+running = True
+
+
+def handle_command(message):
+    global running, status
+
+    if message.startswith("MOVE,"):
+        try:
+            parts = message.split(",")
+            move_to(int(parts[1]), int(parts[2]))
+        except Exception as error:
+            status = "Blad MOVE"
+            print("Blad MOVE:", error)
+
+    elif message == "CLICK":
+        click_left()
+
+    elif message == "QUIT":
+        print("Zamykam")
+        running = False
 
 def receive_time():
-    global time_buffer
+    global time_buffer, time_synced, status
 
     port = usb_cdc.data
 
@@ -64,6 +124,7 @@ def receive_time():
         return
 
     data = port.read(port.in_waiting)
+
     if not data:
         return
 
@@ -77,6 +138,7 @@ def receive_time():
             message = line.decode("ascii").strip()
 
             if not message.startswith("TIME,"):
+                handle_command(message)
                 continue
 
             values = [
@@ -89,21 +151,62 @@ def receive_time():
 
             year, month, day, hour, minute, second = values
 
+            if not (
+                2000 <= year <= 2099
+                and 1 <= month <= 12
+                and 1 <= day <= 31
+                and 0 <= hour <= 23
+                and 0 <= minute <= 59
+                and 0 <= second <= 59
+            ):
+                raise ValueError("Niepoprawny zakres daty/czasu")
+
             rtc.RTC().datetime = time.struct_time((
                 year, month, day,
                 hour, minute, second,
                 -1, -1, -1
             ))
 
+            time_synced = True
+            status = "Czas ustawiony"
+
             print("Ustawiono czas:", time.localtime())
             port.write(b"OK\n")
 
         except Exception as error:
+            status = "Blad czasu"
             print("Blad czasu:", error)
             port.write(b"ERROR\n")
 
     if len(time_buffer) > 256:
         time_buffer.clear()
+
+
+def update_display():
+    display.fill(0)
+
+    display.text("PICO - PANEL HID", 0, 0, 1)
+    display.hline(0, 10, 128, 1)
+
+    if time_synced:
+        now = time.localtime()
+
+        clock_text = "{:02d}:{:02d}:{:02d}".format(
+            now.tm_hour,
+            now.tm_min,
+            now.tm_sec
+        )
+
+        display.text(clock_text, 0, 15, 1)
+        display.text("SYNC OK", 66, 15, 1)
+    else:
+        display.text("--:--:--  BRAK SYNC", 0, 15, 1)
+
+    display.text("Cel: " + last_position, 0, 28, 1)
+    display.text(status, 0, 40, 1)
+    display.text("14:rog  15:srodek", 0, 54, 1)
+
+    display.show()
 
 
 for _ in range(3):
@@ -112,15 +215,16 @@ for _ in range(3):
     led.value = False
     time.sleep(0.15)
 
-print("Mysz absolutna gotowa")
-print("GP14: lewy gorny rog (0, 0)")
-print("GP15: srodek ekranu (1920, 1080)")
-print("Odbieranie czasu USB aktywne")
+print("OLED, mysz absolutna i komendy USB gotowe")
+print("GP14: punkt (10, 10)")
+print("GP15: punkt (1920, 1080)")
+print("Komendy: MOVE,x,y | CLICK | QUIT")
 
 previous14 = False
 previous15 = False
+last_refresh = -1.0
 
-while True:
+while running:    
     receive_time()
 
     pressed14 = not button14.value
@@ -129,10 +233,7 @@ while True:
     led.value = pressed14 or pressed15
 
     if pressed14 and not previous14:
-        print("GP14: test punktu 100, 100")
         move_to(10, 10)
-    # if pressed14 and not previous14:
-    #     move_to(0, 0)
 
     if pressed15 and not previous15:
         move_to(TARGET_X, TARGET_Y)
@@ -140,154 +241,35 @@ while True:
     previous14 = pressed14
     previous15 = pressed15
 
-    time.sleep(0.03)
+    port = usb_cdc.data
 
+    if port is not None and port.in_waiting:
+        command = port.readline().decode("ascii").strip()
+        handle_command(command)
 
+    # port = usb_cdc.data
 
+    # if port is not None and port.in_waiting:
+    #     command = port.readline().decode("ascii").strip()
 
+    #     if command.startswith("MOVE,"):
+    #         try:
+    #             parts = command.split(",")
+    #             move_to(int(parts[1]), int(parts[2]))
+    #         except Exception as error:
+    #             print("Blad MOVE:", error)
 
+    #     elif command == "CLICK":
+    #         click_left()
 
+    #     elif command == "QUIT":
+    #         print("Zamykam")
+    #         break
 
-# import usb_cdc
-# import rtc
-# import time
-# import board
-# import digitalio
-# import usb_hid
+    current_time = time.monotonic()
 
-# from adafruit_hid.mouse import Mouse
+    if current_time - last_refresh >= 0.25:
+        update_display()
+        last_refresh = current_time
 
-# # Cel liczony od lewego górnego rogu.
-# # Na razie są to jednostki ruchu myszy, NIE piksele.
-# TARGET_X = 500
-# TARGET_Y = 300
-
-# led = digitalio.DigitalInOut(board.LED)
-# led.switch_to_output(value=False)
-
-# button15 = digitalio.DigitalInOut(board.GP15)
-# button15.switch_to_input(pull=digitalio.Pull.UP)
-
-# button14 = digitalio.DigitalInOut(board.GP14)
-# button14.switch_to_input(pull=digitalio.Pull.UP)
-
-# mouse = Mouse(usb_hid.devices)
-
-
-# def home():
-#     print("Bazowanie: lewy gorny rog")
-
-#     for _ in range(100):
-#         mouse.move(x=-100, y=-100)
-#         time.sleep(0.01)
-
-#     time.sleep(0.3)
-#     print("Bazowanie zakonczone")
-
-
-# def move_from_home(x, y):
-#     # Małe porcje ruchu, każda w zakresie raportu myszy.
-#     while x != 0 or y != 0:
-#         dx = max(-20, min(20, x))
-#         dy = max(-20, min(20, y))
-
-#         mouse.move(x=dx, y=dy)
-
-#         x -= dx
-#         y -= dy
-#         time.sleep(0.01)
-
-
-# def go_to(x, y):
-#     home()
-#     print("Dojazd do celu:", x, y)
-#     move_from_home(x, y)
-#     print("Gotowe")
-
-
-# for _ in range(3):
-#     led.value = True
-#     time.sleep(0.15)
-#     led.value = False
-#     time.sleep(0.15)
-
-# print("GP14: bazowanie")
-# print("GP15: bazowanie + dojazd do celu")
-
-
-# time_buffer = bytearray()
-
-
-# def receive_time():
-#     global time_buffer
-
-#     port = usb_cdc.data
-#     if port is None or not port.in_waiting:
-#         return
-
-#     data = port.read(port.in_waiting)
-#     if not data:
-#         return
-
-#     time_buffer.extend(data)
-
-#     while b"\n" in time_buffer:
-#         line, _, time_buffer = time_buffer.partition(b"\n")
-#         time_buffer = bytearray(time_buffer)
-
-#         try:
-#             message = line.decode("ascii").strip()
-
-#             if message.startswith("TIME,"):
-#                 values = [
-#                     int(value)
-#                     for value in message.split(",")[1:]
-#                 ]
-
-#                 if len(values) != 6:
-#                     raise ValueError("Oczekiwano 6 liczb")
-
-#                 year, month, day, hour, minute, second = values
-
-#                 rtc.RTC().datetime = time.struct_time((
-#                     year, month, day,
-#                     hour, minute, second,
-#                     -1, -1, -1
-#                 ))
-
-#                 print("Ustawiono czas:", time.localtime())
-#                 port.write(b"OK\n")
-
-#         except Exception as error:
-#             print("Blad ustawiania czasu:", error)
-#             port.write(b"ERROR\n")
-
-#     if len(time_buffer) > 256:
-#         time_buffer.clear()
-# while True:
-#     receive_time()
-#     if not button14.value:
-#         led.value = True
-#         try:
-#             home()
-#         finally:
-#             led.value = False
-
-#         while not button14.value:
-#             time.sleep(0.02)
-
-#         time.sleep(0.05)
-
-#     if not button15.value:
-#         led.value = True
-#         try:
-#             go_to(TARGET_X, TARGET_Y)
-#         finally:
-#             led.value = False
-
-#         while not button15.value:
-#             time.sleep(0.02)
-
-#         time.sleep(0.05)
-
-#     time.sleep(0.01)
+    time.sleep(0.02)
