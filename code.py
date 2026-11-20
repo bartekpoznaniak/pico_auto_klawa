@@ -7,13 +7,19 @@ import usb_cdc
 import rtc
 import adafruit_ssd1306
 
+from adafruit_hid.keyboard import Keyboard
+from adafruit_hid.keycode import Keycode
+
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
 TARGET_X = 1920
 TARGET_Y = 1080
 
+VERSION = 1.14
+
 REPORT_ID = 7
+WAKE_DELAY_S = 1200
 
 led = digitalio.DigitalInOut(board.LED)
 led.switch_to_output(value=False)
@@ -45,6 +51,27 @@ if mouse_device is None:
     raise RuntimeError(
         "Brak myszy HID. Sprawdz boot.py i restart USB."
     )
+
+keyboard = Keyboard(usb_hid.devices)
+wake_at = None
+last_rx = "---"
+
+
+def wake_host():
+    for i in range(5):
+        try:
+            move_to(1920 + (i % 2) * 5, 1080)
+        except Exception:
+            pass
+        time.sleep(1)
+
+# def wake_host():
+#     for _ in range(5):
+#         try:
+#             keyboard.send(Keycode.SHIFT)
+#         except Exception:
+#             pass
+#         time.sleep(1)
 
 report = bytearray(5)
 time_buffer = bytearray()
@@ -98,8 +125,8 @@ running = True
 
 
 def handle_command(message):
-    global running, status
-
+    global running, status, wake_at, last_rx
+    last_rx = message[:14]
     if message.startswith("MOVE,"):
         try:
             parts = message.split(",")
@@ -110,6 +137,13 @@ def handle_command(message):
 
     elif message == "CLICK":
         click_left()
+
+    elif message.startswith("WAKE,"):
+        try:
+            wake_at = time.monotonic() + int(message.split(",")[1])
+            status = "Wake zaplanowany"
+        except Exception:
+            status = "Blad WAKE"
 
     elif message == "QUIT":
         print("Zamykam")
@@ -185,8 +219,9 @@ def receive_time():
 def update_display():
     display.fill(0)
 
-    display.text("PICO - PANEL HID", 0, 0, 1)
-    display.hline(0, 10, 128, 1)
+    display.text("PICO HID", 0, 0, 1)
+    display.text("({})".format(VERSION), 128 - 6 * len("({})".format(VERSION)), 0, 1)
+
 
     if time_synced:
         now = time.localtime()
@@ -202,8 +237,14 @@ def update_display():
     else:
         display.text("--:--:--  BRAK SYNC", 0, 15, 1)
 
-    display.text("Cel: " + last_position, 0, 28, 1)
-    display.text(status, 0, 40, 1)
+    display.text("Rx: " + last_rx, 0, 28, 1)
+
+    if wake_at is not None:
+        left = int(wake_at - time.monotonic()) + 1
+        display.text("Wake za {} s".format(max(left, 0)), 0, 40, 1)
+    else:
+        display.text(status, 0, 40, 1)
+
     display.text("14:rog  15:srodek", 0, 54, 1)
 
     display.show()
@@ -224,7 +265,7 @@ previous14 = False
 previous15 = False
 last_refresh = -1.0
 
-while running:    
+while running:
     receive_time()
 
     pressed14 = not button14.value
@@ -233,38 +274,56 @@ while running:
     led.value = pressed14 or pressed15
 
     if pressed14 and not previous14:
-        move_to(10, 10)
-
-    if pressed15 and not previous15:
-        move_to(TARGET_X, TARGET_Y)
+        wake_at = time.monotonic() + WAKE_DELAY_S
+        status = "Wake zaplanowany"
 
     previous14 = pressed14
     previous15 = pressed15
 
-    port = usb_cdc.data
+    if wake_at is not None and time.monotonic() >= wake_at:
+        wake_at = None
+        status = "Budze PC"
+        update_display()
+        wake_host()
+        status = "Wake wyslany"
 
-    if port is not None and port.in_waiting:
-        command = port.readline().decode("ascii").strip()
-        handle_command(command)
 
-    # port = usb_cdc.data
 
-    # if port is not None and port.in_waiting:
-    #     command = port.readline().decode("ascii").strip()
+# while running:    
+#     receive_time()
 
-    #     if command.startswith("MOVE,"):
-    #         try:
-    #             parts = command.split(",")
-    #             move_to(int(parts[1]), int(parts[2]))
-    #         except Exception as error:
-    #             print("Blad MOVE:", error)
+#     pressed14 = not button14.value
+#     pressed15 = not button15.value
 
-    #     elif command == "CLICK":
-    #         click_left()
+#     led.value = pressed14 or pressed15
 
-    #     elif command == "QUIT":
-    #         print("Zamykam")
-    #         break
+#     if pressed14 and not previous14:
+#         move_to(10, 10)
+
+#     if pressed15 and not previous15:
+#         move_to(TARGET_X, TARGET_Y)
+    
+#     if pressed14 and pressed15 and wake_at is None:
+#         wake_at = time.monotonic() + 20
+#         status = "Wake zaplanowany"
+
+#     previous14 = pressed14
+#     previous15 = pressed15
+
+#     port = usb_cdc.data
+
+#     if port is not None and port.in_waiting:
+#         command = port.readline().decode("ascii").strip()
+#         handle_command(command)
+
+    
+#     if wake_at is not None and time.monotonic() >= wake_at:
+#         last_rx = "---"
+#         wake_at = None
+#         status = "Budze PC"
+#         update_display()
+#         wake_host()
+#         status = "Wake wyslany"
 
     current_time = time.monotonic()
 
