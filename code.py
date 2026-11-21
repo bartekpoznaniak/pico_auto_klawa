@@ -19,7 +19,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.21"
+VERSION = "1.223"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 1200
@@ -101,10 +101,11 @@ def mouse_down():
     status = "Mysz wcisnieta"
 
 def mouse_up():
-    global status
+    global status, buttons
     if mouse_device is None:
         status = "Brak myszy"
         return
+    buttons = 0
     report[0] = 0
     mouse_device.send_report(report, report_id=REPORT_ID)
     status = "Mysz puszczona"
@@ -178,6 +179,9 @@ menu_index = 0
 menu_note = ""
 menu_items = ("Uruchom skrypt", "Harmonogram", "Powrot")
 
+script_names = []
+script_index = 0
+
 
 def draw_menu():
     display.fill(0)
@@ -191,10 +195,35 @@ def draw_menu():
     display.text(footer, 0, 56, 1)
     display.show()
 
+def draw_scripts():
+    display.fill(0)
+    display.text("SKRYPTY", 0, 0, 1)
 
+    if not script_names:
+        display.text("Brak skryptow", 0, 20, 1)
+        display.text("14: Powrot", 0, 56, 1)
+        display.show()
+        return
+
+    for offset in range(3):
+        index = script_index + offset
+        if index >= len(script_names):
+            break
+
+        name = script_names[index]
+        prefix = "> " if index == script_index else "  "
+        display.text(prefix + name[:18], 0, 14 + offset * 11, 1)
+
+    display.text("14: OK 15: dalej", 0, 56, 1)
+    display.show()
 def update_display():
+
     if screen == "menu":
         draw_menu()
+        return
+
+    if screen == "scripts":
+        draw_scripts()
         return
 
     display.fill(0)
@@ -370,8 +399,33 @@ while running:
                         if menu_items[menu_index] == "Powrot":
                             screen = "home"
                             menu_note = ""
+
+                        elif menu_items[menu_index] == "Uruchom skrypt":
+                            script_names = list_scripts()
+                            script_index = 0
+                            screen = "scripts"
+
                         else:
                             menu_note = "Jeszcze niedostepne"
+
+                elif screen == "scripts":
+                    if not script_names:
+                        if released14:
+                            screen = "menu"
+                            menu_note = ""
+                    else:
+                        if released15:
+                            script_index = (script_index + 1) % len(script_names)
+
+                        elif released14:
+                            name = script_names[script_index]
+                            status = "Uruchamiam " + name
+                            screen = "home"
+                            scriptengine.run(
+                                "/scripts/" + name + ".txt",
+                                HANDLERS,
+                                run_show,
+                            )
 
                 elif released14:
                     wake_at = time.monotonic() + wake_delay
