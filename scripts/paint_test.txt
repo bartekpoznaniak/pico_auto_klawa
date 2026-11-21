@@ -1,0 +1,14 @@
+# otwarcie Painta
+HOTKEY GUI R
+WAIT 1.5
+TYPE mspaint
+KEY ENTER
+WAIT 5
+HOTKEY GUI UP      # maksymalizacja okna
+WAIT 2
+
+# kwadrat ołówkiem na płótnie
+DRAG 1200 700 2000 700
+DRAG 2000 700 2000 1400
+DRAG 2000 1400 1200 1400
+DRAG 1200 1400 1200 700

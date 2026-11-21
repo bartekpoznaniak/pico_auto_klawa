@@ -7,8 +7,10 @@ import usb_cdc
 import rtc
 import adafruit_ssd1306
 import microcontroller
+import scriptengine
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
+from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 
 
 
@@ -16,7 +18,7 @@ from adafruit_hid.keycode import Keycode
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = 1.16
+VERSION = 1.19
 
 REPORT_ID = 7
 WAKE_DELAY_S = 1200
@@ -40,7 +42,10 @@ for device in usb_hid.devices:
 
 keyboard = Keyboard(usb_hid.devices)
 
+layout = KeyboardLayoutUS(keyboard)
+
 report = bytearray(5)
+buttons = 0
 time_buffer = bytearray()
 time_synced = False
 wake_at = None
@@ -59,7 +64,7 @@ def move_to(x, y):
     y = max(0, min(SCREEN_HEIGHT - 1, int(y)))
     hid_x = round(x * 32767 / (SCREEN_WIDTH - 1))
     hid_y = round(y * 32767 / (SCREEN_HEIGHT - 1))
-    report[0] = 0
+    report[0] = buttons
     report[1] = hid_x & 0xFF
     report[2] = (hid_x >> 8) & 0xFF
     report[3] = hid_y & 0xFF
@@ -81,6 +86,77 @@ def click_left():
     mouse_device.send_report(report, report_id=REPORT_ID)
     status = "Klik lewy"
 
+def mouse_down():
+    global status, buttons
+    if mouse_device is None:
+        status = "Brak myszy"
+        return
+    buttons = 1
+    report[0] = 0x01
+    mouse_device.send_report(report, report_id=REPORT_ID)
+    status = "Mysz wcisnieta"
+
+def mouse_up():
+    global status
+    if mouse_device is None:
+        status = "Brak myszy"
+        return
+    report[0] = 0
+    mouse_device.send_report(report, report_id=REPORT_ID)
+    status = "Mysz puszczona"
+
+KEY_ALIASES = {"CTRL": "CONTROL", "WIN": "GUI", "ESC": "ESCAPE"}
+
+def type_text(text):
+    global status
+    try:
+        layout.write(text)
+        status = "Wpisano tekst"
+    except Exception as error:
+        status = "Blad TYPE"
+        print("Blad TYPE:", error)
+
+def press_keys(names):
+    global status
+    try:
+        codes = []
+        for name in names:
+            name = KEY_ALIASES.get(name, name)
+            codes.append(getattr(Keycode, name))
+        keyboard.send(*codes)
+        status = "Klawisz " + "+".join(names)
+    except Exception as error:
+        status = "Blad KEY"
+        print("Blad KEY:", error)
+
+def drag(x1, y1, x2, y2, steps=20):
+    global status
+    move_to(x1, y1)
+    time.sleep(0.15)
+    mouse_down()
+    time.sleep(0.15)
+    for i in range(1, steps + 1):
+        move_to(x1 + (x2 - x1) * i / steps,
+                y1 + (y2 - y1) * i / steps)
+        time.sleep(0.01)
+    time.sleep(0.15)
+    mouse_up()
+    status = "Drag OK"
+
+def run_show(text):
+    global status
+    status = text[:21]
+    update_display()
+
+HANDLERS = {
+    "move": move_to,
+    "click": click_left,
+    "down": mouse_down,
+    "up": mouse_up,
+    "drag": drag,
+    "type": type_text,
+    "keys": press_keys,
+}
 
 def update_display():
     display.fill(0)
@@ -132,7 +208,6 @@ def handle_command(message):
         except Exception as error:
             status = "Blad MOVE"
             print("Blad MOVE:", error)
-
     elif message == "CLICK":
         click_left()
 
@@ -149,6 +224,9 @@ def handle_command(message):
         print("Zamykam")
         running = False
 
+    elif message.startswith("RUN,"):
+        name = message.split(",")[1].strip()
+        scriptengine.run("/scripts/" + name + ".txt", HANDLERS, run_show)
 
 def receive_time():
     global time_buffer, time_synced, status
