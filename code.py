@@ -1,6 +1,7 @@
 import time
 import board
 import busio
+import os
 import digitalio
 import usb_hid
 import usb_cdc
@@ -18,7 +19,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = 1.19
+VERSION = "1.21"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 1200
@@ -30,6 +31,9 @@ led.switch_to_output(value=False)
 
 button14 = digitalio.DigitalInOut(board.GP14)
 button14.switch_to_input(pull=digitalio.Pull.UP)
+
+button15 = digitalio.DigitalInOut(board.GP15)
+button15.switch_to_input(pull=digitalio.Pull.UP)
 
 i2c = busio.I2C(scl=board.GP5, sda=board.GP4, frequency=100_000)
 display = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3C)
@@ -158,7 +162,41 @@ HANDLERS = {
     "keys": press_keys,
 }
 
+def list_scripts():
+    try:
+        return sorted(
+            name[:-4]
+            for name in os.listdir("/scripts")
+            if name.lower().endswith(".txt")
+        )
+    except OSError as error:
+        print("Blad odczytu /scripts:", error)
+        return []
+
+screen = "home"
+menu_index = 0
+menu_note = ""
+menu_items = ("Uruchom skrypt", "Harmonogram", "Powrot")
+
+
+def draw_menu():
+    display.fill(0)
+    display.text("MENU " + VERSION, 0, 0, 1)
+
+    for index, label in enumerate(menu_items):
+        prefix = "> " if index == menu_index else "  "
+        display.text(prefix + label, 0, 14 + index * 11, 1)
+
+    footer = menu_note or "14: OK  15: dalej"
+    display.text(footer, 0, 56, 1)
+    display.show()
+
+
 def update_display():
+    if screen == "menu":
+        draw_menu()
+        return
+
     display.fill(0)
     display.text("PICO HID", 0, 0, 1)
     ver = "({})".format(VERSION)
@@ -285,6 +323,9 @@ for _ in range(3):
 print("Pico HID", VERSION, "- komendy: MOVE,x,y | CLICK | WAKE,s | QUIT")
 
 previous14 = False
+previous15 = False
+both_latched = False
+buttons_changed_at = time.monotonic()
 last_refresh = -1.0
 
 if microcontroller.nvm[0] == 1:
@@ -297,13 +338,50 @@ if microcontroller.nvm[0] == 1:
 while running:
     receive_time()
 
-    pressed14 = not button14.value
-    led.value = pressed14
 
-    if pressed14 and not previous14:
-        wake_at = time.monotonic() + wake_delay
-        status = "Wake zaplanowany"
-    previous14 = pressed14
+
+    pressed14 = not button14.value
+    pressed15 = not button15.value
+    led.value = pressed14 or pressed15
+
+    if (pressed14, pressed15) != (previous14, previous15):
+        if time.monotonic() - buttons_changed_at >= 0.05:
+
+            if pressed14 and pressed15:
+                both_latched = True
+                screen = "menu"
+                menu_index = 0
+                menu_note = ""
+
+            elif both_latched:
+                if not pressed14 and not pressed15:
+                    both_latched = False
+
+            else:
+                released14 = previous14 and not pressed14
+                released15 = previous15 and not pressed15
+
+                if screen == "menu":
+                    if released15:
+                        menu_index = (menu_index + 1) % len(menu_items)
+                        menu_note = ""
+
+                    elif released14:
+                        if menu_items[menu_index] == "Powrot":
+                            screen = "home"
+                            menu_note = ""
+                        else:
+                            menu_note = "Jeszcze niedostepne"
+
+                elif released14:
+                    wake_at = time.monotonic() + wake_delay
+                    status = "Wake zaplanowany"
+
+            previous14 = pressed14
+            previous15 = pressed15
+            buttons_changed_at = time.monotonic()
+    else:
+        buttons_changed_at = time.monotonic()
 
     if wake_at is not None and time.monotonic() >= wake_at:
         wake_at = None
