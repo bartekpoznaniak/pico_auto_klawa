@@ -19,7 +19,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.226"
+VERSION = "1.227"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 12
@@ -163,6 +163,29 @@ HANDLERS = {
     "keys": press_keys,
 }
 
+def load_schedule():
+    entries = []
+    try:
+        with open("/schedules/harmonogram.txt", "r") as file:
+            for line in file:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                try:
+                    hour, minute = parts[0].split(":")
+                    hour = int(hour)
+                    minute = int(minute)
+                except ValueError:
+                    continue
+                if 0 <= hour <= 23 and 0 <= minute <= 59:
+                    entries.append((hour, minute, " ".join(parts[1:])))
+    except OSError:
+        pass
+    return entries
+
 def list_scripts():
     try:
         return sorted(
@@ -182,6 +205,10 @@ menu_items = ("URUCHOM MAKRO", "HARMONOGRAM", "< POWROT")
 script_names = []
 script_index = 0
 selected_script = ""
+
+schedule_entries = []
+schedule_index = 0
+last_schedule_fire = ""
 
 
 def draw_menu():
@@ -225,6 +252,27 @@ def draw_confirm():
     display.text("1: TAK  2: NIE", 0, 56, 1)
     display.show()
 
+def draw_harmonogram():
+    display.fill(0)
+    display.text("HARMONOGRAM", 0, 0, 1)
+
+    if not schedule_entries:
+        display.text("BRAK WPISOW", 0, 20, 1)
+        display.text("1+2: Powrot", 0, 56, 1)
+        display.show()
+        return
+
+    for offset in range(3):
+        index = schedule_index + offset
+        if index >= len(schedule_entries):
+            break
+        hour, minute, name = schedule_entries[index]
+        prefix = "> " if index == schedule_index else "  "
+        display.text(prefix + "{:02d}:{:02d} {}".format(hour, minute, name[:12]), 0, 14 + offset * 11, 1)
+
+    display.text("1: teraz  2: dalej", 0, 56, 1)
+    display.show()
+
 def update_display():
 
     if screen == "menu":
@@ -238,7 +286,11 @@ def update_display():
     if screen == "confirm":
         draw_confirm()
         return
-
+    
+    if screen == "harmonogram":
+        draw_harmonogram()
+        return
+    
     display.fill(0)
     display.text("PICO HID", 0, 0, 1)
     ver = "({})".format(VERSION)
@@ -417,6 +469,11 @@ while running:
                             screen = "home"
                             menu_note = ""
 
+                        elif menu_items[menu_index] == "HARMONOGRAM":
+                            schedule_entries = load_schedule()
+                            schedule_index = 0
+                            screen = "harmonogram"
+
                         elif menu_items[menu_index] == "URUCHOM MAKRO":
                             script_names = list_scripts()
                             script_index = 0
@@ -439,6 +496,20 @@ while running:
                             selected_script = script_names[script_index]
                             screen = "confirm"
 
+                elif screen == "harmonogram":
+                    if not schedule_entries:
+                        if released14 and released15:
+                            screen = "menu"
+                            menu_note = ""
+                    else:
+                        if released15:
+                            schedule_index = (schedule_index + 1) % len(schedule_entries)
+
+                        elif released14:
+                            hour, minute, name = schedule_entries[schedule_index]
+                            selected_script = name
+                            screen = "confirm"
+
                 elif screen == "confirm":
                     if released14:
                         status = "Uruchamiam " + selected_script
@@ -459,6 +530,32 @@ while running:
                 elif released14:
                     wake_at = time.monotonic() + wake_delay
                     status = "Wake zaplanowany"
+
+                if time_synced and schedule_entries:
+                    now = time.localtime()
+                    for hour, minute, name in schedule_entries:
+                        key = "{}-{:02d}-{:02d} {:02d}:{:02d} {}".format(
+                            now.tm_year,
+                            now.tm_mon,
+                            now.tm_mday,
+                            hour,
+                            minute,
+                            name,
+                        )
+                        if (
+                            now.tm_hour == hour
+                            and now.tm_min == minute
+                            and last_schedule_fire != key
+                        ):
+                            last_schedule_fire = key
+                            status = "Harmonogram: " + name
+                            updatedisplay()
+                            wakehost()
+                            scriptengine.run(
+                                "/scripts/" + name + ".txt",
+                                HANDLERS,
+                                run_show,
+                            )
 
             previous14 = pressed14
             previous15 = pressed15
