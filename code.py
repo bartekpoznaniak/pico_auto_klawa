@@ -19,10 +19,10 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.223"
+VERSION = "1.226"
 
 REPORT_ID = 7
-WAKE_DELAY_S = 1200
+WAKE_DELAY_S = 12
 WAKE_TRIES = 8
 AFTER_RESET_S = 3
 
@@ -177,10 +177,11 @@ def list_scripts():
 screen = "home"
 menu_index = 0
 menu_note = ""
-menu_items = ("Uruchom skrypt", "Harmonogram", "Powrot")
+menu_items = ("URUCHOM MAKRO", "HARMONOGRAM", "< POWROT")
 
 script_names = []
 script_index = 0
+selected_script = ""
 
 
 def draw_menu():
@@ -191,17 +192,17 @@ def draw_menu():
         prefix = "> " if index == menu_index else "  "
         display.text(prefix + label, 0, 14 + index * 11, 1)
 
-    footer = menu_note or "14: OK  15: dalej"
+    footer = menu_note or "1: OK  2: dalej"
     display.text(footer, 0, 56, 1)
     display.show()
 
 def draw_scripts():
     display.fill(0)
-    display.text("SKRYPTY", 0, 0, 1)
+    display.text("MAKRA", 0, 0, 1)
 
     if not script_names:
-        display.text("Brak skryptow", 0, 20, 1)
-        display.text("14: Powrot", 0, 56, 1)
+        display.text("BRAK MAKR", 0, 20, 1)
+        display.text("1: Powrot", 0, 56, 1)
         display.show()
         return
 
@@ -214,8 +215,16 @@ def draw_scripts():
         prefix = "> " if index == script_index else "  "
         display.text(prefix + name[:18], 0, 14 + offset * 11, 1)
 
-    display.text("14: OK 15: dalej", 0, 56, 1)
+    display.text("1: OK  2: dalej", 0, 56, 1)
     display.show()
+
+def draw_confirm():
+    display.fill(0)
+    display.text("URUCHOMIC?", 0, 0, 1)
+    display.text(selected_script[:18], 0, 20, 1)
+    display.text("1: TAK  2: NIE", 0, 56, 1)
+    display.show()
+
 def update_display():
 
     if screen == "menu":
@@ -224,6 +233,10 @@ def update_display():
 
     if screen == "scripts":
         draw_scripts()
+        return
+
+    if screen == "confirm":
+        draw_confirm()
         return
 
     display.fill(0)
@@ -247,7 +260,11 @@ def update_display():
     else:
         display.text(status, 0, 40, 1)
 
-    display.text("14: wake", 0, 54, 1)
+    if wake_at is not None:
+        display.text("1: wake  2: anuluj", 0, 54, 1)
+    else:
+        display.text("1: wake", 0, 54, 1)
+
     display.show()
 
 
@@ -396,17 +413,18 @@ while running:
                         menu_note = ""
 
                     elif released14:
-                        if menu_items[menu_index] == "Powrot":
+                        if menu_items[menu_index] == "< POWROT":    
                             screen = "home"
                             menu_note = ""
 
-                        elif menu_items[menu_index] == "Uruchom skrypt":
+                        elif menu_items[menu_index] == "URUCHOM MAKRO":
                             script_names = list_scripts()
                             script_index = 0
                             screen = "scripts"
-
                         else:
                             menu_note = "Jeszcze niedostepne"
+
+
 
                 elif screen == "scripts":
                     if not script_names:
@@ -418,14 +436,25 @@ while running:
                             script_index = (script_index + 1) % len(script_names)
 
                         elif released14:
-                            name = script_names[script_index]
-                            status = "Uruchamiam " + name
-                            screen = "home"
-                            scriptengine.run(
-                                "/scripts/" + name + ".txt",
-                                HANDLERS,
-                                run_show,
-                            )
+                            selected_script = script_names[script_index]
+                            screen = "confirm"
+
+                elif screen == "confirm":
+                    if released14:
+                        status = "Uruchamiam " + selected_script
+                        screen = "home"
+                        scriptengine.run(
+                            "/scripts/" + selected_script + ".txt",
+                            HANDLERS,
+                            run_show,
+                        )
+
+                    elif released15:
+                        screen = "scripts"
+
+                elif wake_at is not None and released15:
+                    wake_at = None
+                    status = "Wake anulowany"
 
                 elif released14:
                     wake_at = time.monotonic() + wake_delay
