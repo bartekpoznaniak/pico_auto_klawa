@@ -19,7 +19,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.227"
+VERSION = "1.229"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 12
@@ -209,6 +209,10 @@ selected_script = ""
 schedule_entries = []
 schedule_index = 0
 last_schedule_fire = ""
+schedule_enabled = False
+active_schedule = None
+schedule_wake = True
+pending_wake = True
 
 
 def draw_menu():
@@ -252,6 +256,35 @@ def draw_confirm():
     display.text("1: TAK  2: NIE", 0, 56, 1)
     display.show()
 
+def draw_schedule_confirm():
+    display.fill(0)
+    display.text("WLACZYC PLAN?", 0, 0, 1)
+    hour, minute, name = schedule_entries[schedule_index]
+    display.text("{:02d}:{:02d} {}".format(hour, minute, name[:12]), 0, 16, 1)
+    display.text("Wybudzanie: " + ("TAK" if pending_wake else "NIE"), 0, 32, 1)
+    display.text("1: TAK 2: NIE", 0, 56, 1)
+    display.show()
+
+
+def draw_schedule_wake():
+    display.fill(0)
+    display.text("WYBUDZANIE?", 0, 0, 1)
+    display.text("Przed makrem", 0, 20, 1)
+    display.text("1: TAK 2: NIE", 0, 56, 1)
+    display.show()
+
+
+def draw_schedule_active():
+    display.fill(0)
+    display.text("PLAN WLACZONY", 0, 0, 1)
+    hour, minute, name = active_schedule
+    display.text("{:02d}:{:02d} {}".format(hour, minute, name[:12]), 0, 16, 1)
+    display.text("Wybudzanie: " + ("TAK" if schedule_wake else "NIE"), 0, 32, 1)
+    display.text("1: WYLACZ PLAN", 0, 46, 1)
+    display.text("2: Powrot", 0, 56, 1)
+    display.show()
+
+
 def draw_harmonogram():
     display.fill(0)
     display.text("HARMONOGRAM", 0, 0, 1)
@@ -287,6 +320,18 @@ def update_display():
         draw_confirm()
         return
     
+    if screen == "schedule_wake":
+        draw_schedule_wake()
+        return
+
+    if screen == "schedule_confirm":
+        draw_schedule_confirm()
+        return
+
+    if screen == "schedule_active":
+        draw_schedule_active()
+        return
+
     if screen == "harmonogram":
         draw_harmonogram()
         return
@@ -315,7 +360,7 @@ def update_display():
     if wake_at is not None:
         display.text("1: wake  2: anuluj", 0, 54, 1)
     else:
-        display.text("1: wake", 0, 54, 1)
+        display.text("1:wake PLAN ON" if schedule_enabled else "1:wake PLAN OFF", 0, 54, 1)
 
     display.show()
 
@@ -472,7 +517,7 @@ while running:
                         elif menu_items[menu_index] == "HARMONOGRAM":
                             schedule_entries = load_schedule()
                             schedule_index = 0
-                            screen = "harmonogram"
+                            screen = "schedule_active" if schedule_enabled else "harmonogram"
 
                         elif menu_items[menu_index] == "URUCHOM MAKRO":
                             script_names = list_scripts()
@@ -506,9 +551,40 @@ while running:
                             schedule_index = (schedule_index + 1) % len(schedule_entries)
 
                         elif released14:
-                            hour, minute, name = schedule_entries[schedule_index]
-                            selected_script = name
-                            screen = "confirm"
+                            screen = "schedule_wake"
+
+                elif screen == "schedule_active":
+                    if released14:
+                        schedule_enabled = False
+                        active_schedule = None
+                        status = "Plan wylaczony"
+                        screen = "home"
+                    elif released15:
+                        screen = "menu"
+
+                elif screen == "schedule_wake":
+                    if released14 or released15:
+                        pending_wake = released14
+                        screen = "schedule_confirm"
+
+                elif screen == "schedule_confirm":
+                    if released15:
+                        screen = "harmonogram"
+                    elif released14:
+                        if not time_synced:
+                            status = "Najpierw SYNC czasu"
+                            screen = "home"
+                        else:
+                            active_schedule = schedule_entries[schedule_index]
+                            schedule_wake = pending_wake
+                            schedule_enabled = True
+                            hour, minute, name = active_schedule
+                            now = time.localtime()
+                            last_schedule_fire = "{}-{:02d}-{:02d} {:02d}:{:02d}".format(
+                                now.tm_year, now.tm_mon, now.tm_mday,
+                                now.tm_hour, now.tm_min)
+                            status = "Plan ON {:02d}:{:02d}".format(hour, minute)
+                            screen = "home"
 
                 elif screen == "confirm":
                     if released14:
@@ -531,37 +607,31 @@ while running:
                     wake_at = time.monotonic() + wake_delay
                     status = "Wake zaplanowany"
 
-                if time_synced and schedule_entries:
-                    now = time.localtime()
-                    for hour, minute, name in schedule_entries:
-                        key = "{}-{:02d}-{:02d} {:02d}:{:02d} {}".format(
-                            now.tm_year,
-                            now.tm_mon,
-                            now.tm_mday,
-                            hour,
-                            minute,
-                            name,
-                        )
-                        if (
-                            now.tm_hour == hour
-                            and now.tm_min == minute
-                            and last_schedule_fire != key
-                        ):
-                            last_schedule_fire = key
-                            status = "Harmonogram: " + name
-                            updatedisplay()
-                            wakehost()
-                            scriptengine.run(
-                                "/scripts/" + name + ".txt",
-                                HANDLERS,
-                                run_show,
-                            )
-
             previous14 = pressed14
             previous15 = pressed15
             buttons_changed_at = time.monotonic()
     else:
         buttons_changed_at = time.monotonic()
+
+    if schedule_enabled and time_synced and active_schedule is not None:
+        now = time.localtime()
+        hour, minute, name = active_schedule
+        key = "{}-{:02d}-{:02d} {:02d}:{:02d}".format(
+            now.tm_year, now.tm_mon, now.tm_mday, hour, minute)
+        if (now.tm_hour == hour and now.tm_min == minute
+                and last_schedule_fire != key):
+            last_schedule_fire = key
+            status = "Harmonogram: " + name
+            screen = "home"
+            update_display()
+            try:
+                if schedule_wake:
+                    wake_host()
+                scriptengine.run("/scripts/" + name + ".txt", HANDLERS, run_show)
+                status = "Plan ON {:02d}:{:02d}".format(hour, minute)
+            except Exception as error:
+                status = "Blad harmonogramu"
+                print("Blad harmonogramu:", error)
 
     if wake_at is not None and time.monotonic() >= wake_at:
         wake_at = None
