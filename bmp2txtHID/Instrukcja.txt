@@ -1,0 +1,55 @@
+Pico HID 1.231
+
+INSTALACJA
+- Punkt powrotu w Git: 5f67453 (wersja 1.229).
+- Wgraj code.py, potem boot.py jako ostatni.
+- Gdy Windows odmawia zapisu, odlacz USB i podlacz trzymajac przycisk 2.
+  Po uruchomieniu zwolnij przycisk. To tryb serwisowy.
+- Po pierwszej zmianie boot.py bezpiecznie wysun CIRCUITPY i fizycznie
+  odlacz/podlacz USB bez przyciskow, aby uruchomic nowa konfiguracje.
+
+TRYBY
+- Normalny: Pico zapisuje TXT; Windows tylko odczytuje dysk.
+- Serwisowy: Windows zapisuje; harmonogram z przyciskow jest zablokowany.
+- Wejscie w serwis: przycisk 2 trzymany przy podlaczeniu USB.
+- Wyjscie bez wyciagania kabla: zapisz i zamknij pliki w Windows,
+  bezpiecznie wysun CIRCUITPY (nie tylko zamknij okno Eksploratora).
+  Na Pico nacisnij oba przyciski -> przewin do ZAKONCZ SERWIS -> 1.
+  Ekran przypomina o wysunieciu dysku. Po jego wysunieciu nacisnij 1: RESET.
+  Zwolnij przyciski. Reset nie uruchamia wysylania Shift.
+- Przycisk 2 w chwili startu wybiera serwis, wiec nie trzymaj go przy wyjsciu.
+- Po resecie zsynchronizuj czas dotychczasowym programem Windows.
+- Reset nie jest mozliwy do wywolania z przyciskow w trakcie blokujacego zapisu TXT.
+- Potwierdzenie na OLED nie wykrywa automatycznie wysuniecia dysku w Windows.
+
+HARMONOGRAM
+- Oba przyciski -> HARMONOGRAM -> wybierz wpis (2: dalej, 1: ustaw).
+- Bez SYNC wlaczenie jest zablokowane.
+- Godzina: 1 zwieksza, 2 akceptuje. Minuta: 1 zwieksza, 2 zapisuje TXT.
+- Potem wybierz wybudzanie (1 TAK / 2 NIE) i potwierdz plan.
+- Zapis godziny jest wykonywany juz po akceptacji minut, nawet jesli pozniej
+  odmowisz wlaczenia planu. Oba przyciski przed zapisem wracaja do menu.
+- PLAN ON (W+) oznacza plan z wybudzaniem; PLAN ON (W-) bez wybudzania.
+- W aktywnym planie menu pozwala WYLACZYC PLAN lub ZMIENIC GODZINE.
+- Ustawienie minionej godziny lub aktualnej minuty oznacza oczekiwanie do jutra.
+- Harmonogram jest JEDNORAZOWY: po wykonaniu PLAN OFF.
+- W+: zapis zadania w NVM -> reset -> 3 s -> 8x Shift co 1 s -> 12 s -> makro.
+- W-: wykonanie makra bez resetu i bez Shift.
+- Reset nie czeka na SYNC przed wykonaniem przekazanego zadania.
+- Po resecie synchronizacje trzeba ponowic przed wlaczeniem kolejnego planu.
+- Aktywny plan oczekujacy nie jest odtwarzany po odlaczeniu zasilania.
+- Wylaczenie planu nie sluzy do przerywania trwajacego makra/wybudzania.
+- Poprzedni TXT zachowany jako harmonogram.txt.bak.
+
+TESTY NA PICO
+1. Sprawdz wersje 1.231, brak SYNC i blokade planu.
+2. Zsynchronizuj czas, ustaw plan za 2-3 min bez wybudzania, sprawdz W- i wykonanie.
+3. Ustaw plan, zmien godzine, wylacz plan.
+4. Ustaw plan z wybudzaniem, uspij komputer, sprawdz reset i wykonanie makra.
+5. Wejdz w serwis, edytuj TXT z Windows, wysun dysk, wyjdz przez menu.
+   Sprawdz brak Shift i mozliwosc edycji godziny z Pico po ponownym SYNC.
+
+WERYFIKACJA
+Sprawdzono skladnie obu plikow, zapis TXT z kopia, blokade zapisu w serwisie,
+rekord NVM i sciezke resetu serwisowego (zerowanie flagi wake).
+Nie wykonano testow na fizycznym Pico. Nie odlaczaj zasilania w trakcie zapisu.

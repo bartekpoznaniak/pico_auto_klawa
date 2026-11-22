@@ -1,4 +1,8 @@
 import time
+import json
+import storage
+# import supervisor
+# supervisor.disable_autoreload()
 import board
 import busio
 import os
@@ -19,7 +23,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.229"
+VERSION = "1.241"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 12
@@ -186,6 +190,94 @@ def load_schedule():
         pass
     return entries
 
+
+
+def save_schedule_entry(index, entry):
+    print("SAVE:", index, entry)
+    path = "/schedules/harmonogram.txt"
+
+    with open(path, "r") as file:
+        lines = file.readlines()
+
+    valid_index = 0
+    found = False
+
+    for line_index, line in enumerate(lines):
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        parts = stripped.split()
+
+        if len(parts) < 2:
+            continue
+
+        try:
+            old_hour, old_minute = parts[0].split(":")
+            old_hour = int(old_hour)
+            old_minute = int(old_minute)
+        except ValueError:
+            continue
+
+        if not (0 <= old_hour <= 23 and 0 <= old_minute <= 59):
+            continue
+
+        if valid_index == index:
+            lines[line_index] = "{:02d}:{:02d} {}\n".format(
+                entry[0], entry[1], entry[2]
+            )
+            found = True
+            break
+
+        valid_index += 1
+
+    if not found:
+        raise ValueError("Brak wpisu")
+
+
+    temp_path = path + ".tmp"
+
+    with open(temp_path, "w") as file:
+        file.write("".join(lines))
+        file.flush()
+        os.sync()
+
+    with open(path, "r") as check_file:
+        print("PO ZAPISIE:", check_file.read())        
+
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+    os.rename(temp_path, path)
+    os.sync()
+
+   
+def prepare_schedule_reset(name):
+    payload = json.dumps({"macro": name}).encode("utf-8")
+    if len(payload) > len(microcontroller.nvm) - 4:
+        raise ValueError("Za dluga nazwa")
+    record = bytes((2, 0, len(payload) & 255, len(payload) >> 8)) + payload
+    microcontroller.nvm[:len(record)] = record
+    microcontroller.reset()
+
+
+def run_scheduled_macro(name):
+    global status
+    result = "Blad makra planu"
+    try:
+        scriptengine.run("/scripts/" + name + ".txt", HANDLERS, run_show)
+        result = "Plan wykonany"
+    except Exception as error:
+        print("Blad makra:", error)
+    finally:
+        keyboard.release_all()
+        mouse_up()
+    status = result
+
+
 def list_scripts():
     try:
         return sorted(
@@ -200,7 +292,9 @@ def list_scripts():
 screen = "home"
 menu_index = 0
 menu_note = ""
-menu_items = ("URUCHOM MAKRO", "HARMONOGRAM", "< POWROT")
+service_mode = storage.getmount("/").readonly
+menu_items = (("URUCHOM MAKRO", "HARMONOGRAM", "ZAKONCZ SERWIS", "< POWROT")
+              if service_mode else ("URUCHOM MAKRO", "HARMONOGRAM", "< POWROT"))
 
 script_names = []
 script_index = 0
@@ -213,19 +307,23 @@ schedule_enabled = False
 active_schedule = None
 schedule_wake = True
 pending_wake = True
+edit_hour = 0
+edit_minute = 0
+edit_active = False
+plan_action_index = 0
+plan_actions = ("WYLACZ PLAN", "ZMIEN GODZINE", "< POWROT")
 
 
 def draw_menu():
     display.fill(0)
-    display.text("MENU " + VERSION, 0, 0, 1)
-
-    for index, label in enumerate(menu_items):
-        prefix = "> " if index == menu_index else "  "
-        display.text(prefix + label, 0, 14 + index * 11, 1)
-
-    footer = menu_note or "1: OK  2: dalej"
-    display.text(footer, 0, 56, 1)
+    display.text(("SERWIS " if service_mode else "MENU ") + VERSION, 0, 0, 1)
+    start = max(0, menu_index - 2)
+    for offset, label in enumerate(menu_items[start:start + 3]):
+        prefix = "> " if start + offset == menu_index else "  "
+        display.text(prefix + label, 0, 14 + offset * 11, 1)
+    display.text(menu_note or "1: OK 2: dalej", 0, 56, 1)
     display.show()
+
 
 def draw_scripts():
     display.fill(0)
@@ -276,12 +374,32 @@ def draw_schedule_wake():
 
 def draw_schedule_active():
     display.fill(0)
-    display.text("PLAN WLACZONY", 0, 0, 1)
+    display.text("PLAN ON " + ("(W+)" if schedule_wake else "(W-)"), 0, 0, 1)
     hour, minute, name = active_schedule
-    display.text("{:02d}:{:02d} {}".format(hour, minute, name[:12]), 0, 16, 1)
-    display.text("Wybudzanie: " + ("TAK" if schedule_wake else "NIE"), 0, 32, 1)
-    display.text("1: WYLACZ PLAN", 0, 46, 1)
-    display.text("2: Powrot", 0, 56, 1)
+    display.text("{:02d}:{:02d} {}".format(hour, minute, name[:12]), 0, 12, 1)
+    for index, label in enumerate(plan_actions):
+        display.text((">" if index == plan_action_index else " ") + label,
+                     0, 25 + index * 10, 1)
+    display.text("1: OK 2: dalej", 0, 56, 1)
+    display.show()
+
+
+def draw_schedule_edit():
+    display.fill(0)
+    display.text("USTAW CZAS", 0, 0, 1)
+    display.text("{:02d}:{:02d}".format(edit_hour, edit_minute), 0, 18, 1)
+    display.text("Godzina" if screen == "edit_hour" else "Minuta", 0, 32, 1)
+    display.text("1: + 2: dalej", 0, 56, 1)
+    display.show()
+
+
+def draw_service_exit():
+    display.fill(0)
+    display.text("ZAKONCZ SERWIS?", 0, 0, 1)
+    display.text("Wysun CIRCUITPY", 0, 15, 1)
+    display.text("w Windows!", 0, 26, 1)
+    display.text("Po resecie: SYNC", 0, 39, 1)
+    display.text("1: RESET 2: NIE", 0, 56, 1)
     display.show()
 
 
@@ -307,6 +425,13 @@ def draw_harmonogram():
     display.show()
 
 def update_display():
+    if screen == "service_exit":
+        draw_service_exit()
+        return
+    if screen in ("edit_hour", "edit_minute"):
+        draw_schedule_edit()
+        return
+
 
     if screen == "menu":
         draw_menu()
@@ -349,7 +474,9 @@ def update_display():
     else:
         display.text("--:--:-- BRAK SYNC", 0, 15, 1)
 
-    display.text("Rx: " + last_rx, 0, 28, 1)
+    display.text("SERWIS: zapis z PC" if service_mode else
+                 (("PLAN ON " + ("(W+)" if schedule_wake else "(W-)"))
+                  if schedule_enabled else "PLAN OFF"), 0, 28, 1)
 
     if wake_at is not None:
         left = int(wake_at - time.monotonic()) + 1
@@ -360,7 +487,7 @@ def update_display():
     if wake_at is not None:
         display.text("1: wake  2: anuluj", 0, 54, 1)
     else:
-        display.text("1:wake PLAN ON" if schedule_enabled else "1:wake PLAN OFF", 0, 54, 1)
+        display.text("1:wake 1+2:menu", 0, 54, 1)
 
     display.show()
 
@@ -471,12 +598,29 @@ both_latched = False
 buttons_changed_at = time.monotonic()
 last_refresh = -1.0
 
-if microcontroller.nvm[0] == 1:
+boot_reason = microcontroller.nvm[0]
+if boot_reason in (1, 2):
+    pending_name = None
+    if boot_reason == 2:
+        try:
+            size = microcontroller.nvm[2] | (microcontroller.nvm[3] << 8)
+            if not 0 < size <= len(microcontroller.nvm) - 4:
+                raise ValueError("Niepoprawny rekord")
+            pending_name = json.loads(bytes(microcontroller.nvm[4:4 + size]).decode("utf-8"))["macro"]
+        except Exception as error:
+            status = "Blad zadania resetu"
+            print("Blad zadania resetu:", error)
     microcontroller.nvm[0] = 0
-    status = "Po resecie"
-    update_display()
-    time.sleep(AFTER_RESET_S)
-    wake_host()
+    if boot_reason == 1 or pending_name is not None:
+        status = "Po resecie"
+        update_display()
+        time.sleep(AFTER_RESET_S)
+        wake_host()
+        if pending_name is not None:
+            status = "Czekam na komputer"
+            update_display()
+            time.sleep(WAKE_DELAY_S)
+            run_scheduled_macro(pending_name)
 
 while running:
     receive_time()
@@ -514,10 +658,17 @@ while running:
                             screen = "home"
                             menu_note = ""
 
+                        elif menu_items[menu_index] == "ZAKONCZ SERWIS":
+                            screen = "service_exit"
+
                         elif menu_items[menu_index] == "HARMONOGRAM":
-                            schedule_entries = load_schedule()
-                            schedule_index = 0
-                            screen = "schedule_active" if schedule_enabled else "harmonogram"
+                            if service_mode:
+                                menu_note = "Najpierw koniec serwis"
+                            else:
+                                schedule_entries = load_schedule()
+                                schedule_index = 0
+                                plan_action_index = 0
+                                screen = "schedule_active" if schedule_enabled else "harmonogram"
 
                         elif menu_items[menu_index] == "URUCHOM MAKRO":
                             script_names = list_scripts()
@@ -551,21 +702,79 @@ while running:
                             schedule_index = (schedule_index + 1) % len(schedule_entries)
 
                         elif released14:
-                            screen = "schedule_wake"
+                            if not time_synced:
+                                status = "Najpierw SYNC z PC"
+                                screen = "home"
+                            else:
+                                edit_hour, edit_minute, _ = schedule_entries[schedule_index]
+                                edit_active = False
+                                screen = "edit_hour"
+
+                elif screen == "service_exit":
+                    if released15:
+                        screen = "menu"
+                    elif released14:
+                        # Service exit never sets the wake flag.
+                        wake_at = None
+                        schedule_enabled = False
+                        microcontroller.nvm[0] = 0
+                        keyboard.release_all()
+                        status = "Restart bez wake"
+                        screen = "home"
+                        update_display()
+                        time.sleep(0.2)
+                        microcontroller.reset()
 
                 elif screen == "schedule_active":
+                    if released15:
+                        plan_action_index = (plan_action_index + 1) % len(plan_actions)
+                    elif released14:
+                        if plan_action_index == 0:
+                            schedule_enabled = False
+                            active_schedule = None
+                            status = "Plan wylaczony"
+                            screen = "home"
+                        elif plan_action_index == 1:
+                            schedule_index = schedule_entries.index(active_schedule)
+                            edit_hour, edit_minute, _ = active_schedule
+                            edit_active = True
+                            screen = "edit_hour"
+                        else:
+                            screen = "menu"
+
+                elif screen == "edit_hour":
                     if released14:
-                        schedule_enabled = False
-                        active_schedule = None
-                        status = "Plan wylaczony"
-                        screen = "home"
+                        edit_hour = (edit_hour + 1) % 24
                     elif released15:
-                        screen = "menu"
+                        screen = "edit_minute"
+
+                elif screen == "edit_minute":
+                    if released14:
+                        edit_minute = (edit_minute + 1) % 60
+                    elif released15:
+                        name = schedule_entries[schedule_index][2]
+                        new_entry = (edit_hour, edit_minute, name)
+                        try:
+                            save_schedule_entry(schedule_index, new_entry)
+                            schedule_entries[schedule_index] = new_entry
+                            if edit_active:
+                                active_schedule = new_entry
+                                now = time.localtime()
+                                last_schedule_fire = "{}-{:02d}-{:02d} {:02d}:{:02d}".format(
+                                    now.tm_year, now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min)
+                                screen = "schedule_active"
+                            else:
+                                screen = "schedule_wake"
+                        except Exception as error:
+                            status = "Blad zapisu TXT"
+                            screen = "home"
+                            print("Blad zapisu TXT:", error)
 
                 elif screen == "schedule_wake":
                     if released14 or released15:
                         pending_wake = released14
                         screen = "schedule_confirm"
+
 
                 elif screen == "schedule_confirm":
                     if released15:
@@ -576,8 +785,17 @@ while running:
                             screen = "home"
                         else:
                             active_schedule = schedule_entries[schedule_index]
+
+                            try:
+                                save_schedule_entry(schedule_index, active_schedule)
+                            except Exception as error:
+                                print("Blad zapisu TXT:", error)
+                                status = "Blad zapisu TXT"
+                                screen = "home"
+
                             schedule_wake = pending_wake
                             schedule_enabled = True
+                            wake_at = None
                             hour, minute, name = active_schedule
                             now = time.localtime()
                             last_schedule_fire = "{}-{:02d}-{:02d} {:02d}:{:02d}".format(
@@ -586,7 +804,10 @@ while running:
                             status = "Plan ON {:02d}:{:02d}".format(hour, minute)
                             screen = "home"
 
+
                 elif screen == "confirm":
+
+
                     if released14:
                         status = "Uruchamiam " + selected_script
                         screen = "home"
@@ -624,11 +845,14 @@ while running:
             status = "Harmonogram: " + name
             screen = "home"
             update_display()
+            schedule_enabled = False
+            active_schedule = None
+            wake_at = None
             try:
                 if schedule_wake:
-                    wake_host()
-                scriptengine.run("/scripts/" + name + ".txt", HANDLERS, run_show)
-                status = "Plan ON {:02d}:{:02d}".format(hour, minute)
+                    prepare_schedule_reset(name)
+                else:
+                    run_scheduled_macro(name)
             except Exception as error:
                 status = "Blad harmonogramu"
                 print("Blad harmonogramu:", error)

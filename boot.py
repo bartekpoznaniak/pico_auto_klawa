@@ -1,3 +1,14 @@
+import storage
+import board
+import digitalio
+
+# Button 2 held during reset/USB connection enables Windows write access.
+_mode_button = digitalio.DigitalInOut(board.GP15)
+_mode_button.switch_to_input(pull=digitalio.Pull.UP)
+_usb_edit_mode = not _mode_button.value
+_mode_button.deinit()
+storage.remount("/", readonly=_usb_edit_mode)
+
 import usb_cdc
 import usb_hid
 
