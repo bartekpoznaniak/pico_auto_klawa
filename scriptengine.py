@@ -1,5 +1,8 @@
 import time
 
+last_x = 0
+last_y = 0
+VERSION = "1.1"
 
 def run(path, h, show=lambda s: None):
     with open(path) as f:
@@ -19,13 +22,23 @@ def run(path, h, show=lambda s: None):
                 time.sleep(float(arg))
             elif cmd == "MOVE":
                 x, y = arg.split()
-                h["move"](int(x), int(y))
+                x = int(x)
+                y = int(y)
+                h["move"](x, y)
+                last_x = x
+                last_y = y
             elif cmd == "CLICK":
                 h["click"]()
             elif cmd == "DOWN":
                 h["down"]()
             elif cmd == "UP":
                 h["up"]()
+            elif cmd == "DRAG":
+                p = arg.split()
+                if len(p) not in (4, 5):
+                    raise ValueError("DRAG x1 y1 x2 y2 [kroki]")
+                steps = int(p[4]) if len(p) == 5 else 20
+                h["drag"](int(p[0]), int(p[1]), int(p[2]), int(p[3]), steps)
             elif cmd == "TYPE":
                 h["type"](arg)
             elif cmd == "KEY":

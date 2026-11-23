@@ -23,7 +23,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.241"
+VERSION = "1.242"
 
 REPORT_ID = 7
 WAKE_DELAY_S = 12
@@ -125,18 +125,42 @@ def type_text(text):
         status = "Blad TYPE"
         print("Blad TYPE:", error)
 
+# def press_keys(names):
+#     global status
+#     try:
+#         codes = []
+#         for name in names:
+#             name = KEY_ALIASES.get(name, name)
+#             codes.append(getattr(Keycode, name))
+#         keyboard.send(*codes)
+#         status = "Klawisz " + "+".join(names)
+#     except Exception as error:
+#         status = "Blad KEY"
+#         print("Blad KEY:", error)
+
+
+
 def press_keys(names):
     global status
     try:
         codes = []
+
         for name in names:
             name = KEY_ALIASES.get(name, name)
-            codes.append(getattr(Keycode, name))
+            code = getattr(Keycode, name)
+            codes.append(code)
+            print("KEY:", name, "->", code)
+
+        print("Wysylam:", codes)
+
         keyboard.send(*codes)
+
         status = "Klawisz " + "+".join(names)
+
     except Exception as error:
         status = "Blad KEY"
         print("Blad KEY:", error)
+
 
 def drag(x1, y1, x2, y2, steps=20):
     global status
