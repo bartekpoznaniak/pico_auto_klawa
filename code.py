@@ -23,7 +23,7 @@ from adafruit_hid.keyboard_layout_us import KeyboardLayoutUS
 SCREEN_WIDTH = 3840
 SCREEN_HEIGHT = 2160
 
-VERSION = "1.246d"
+VERSION = "1.247"
 
 REPORT_ID = 7
 
