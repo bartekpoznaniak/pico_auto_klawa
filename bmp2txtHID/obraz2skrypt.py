@@ -1,3 +1,50 @@
+# obraz2skrypt.py - obrazek (czarne kreski na bialym) -> ..\hid\scripts\NAZWA.txt
+#
+# DZIALANIE:
+#   1. Wczytuje obraz w skali szarosci, progowanie 128 (ciemne = linia).
+#   2. Znajduje kontury (cv2.findContours) i upraszcza je (approxPolyDP).
+#   3. Skaluje obraz z zachowaniem proporcji i centruje w obszarze rysowania.
+#   4. Dla kazdego konturu generuje: MOVE (start) -> DOWN -> MOVE... -> UP.
+#      Kontur jest domykany (ostatni punkt = pierwszy).
+#
+# WYMAGANIA:
+#   pip install opencv-python
+#
+# UZYCIE:
+#   python obraz2skrypt.py mis.jpg mis --x0 300 --y0 250 --w 600 --h 500
+#
+# ARGUMENTY:
+#   obraz   plik wejsciowy (jpg/png/bmp), np. mysz.jpg
+#   nazwa   nazwa skryptu wyjsciowego (bez .txt), np. mysz
+#   --x0    X lewego gornego rogu pola rysowania na ekranie [px]
+#   --y0    Y lewego gornego rogu pola rysowania na ekranie [px]
+#   --w     szerokosc pola rysowania [px]
+#   --h     wysokosc pola rysowania [px]
+#   --eps   tolerancja upraszczania konturu [px obrazu], domyslnie 2.0
+#           (wieksza = mniej punktow, bardziej kanciaste; mniejsza = dokladniej, dluzszy skrypt)
+#   --min   minimalna dlugosc konturu [px obrazu], domyslnie 30
+#           (odrzuca drobny szum i kropki)
+#
+# WYJSCIE:
+#   ..\hid\scripts\NAZWA.txt (wzgledem polozenia tego pliku), kodowanie ASCII.
+#   Folder hid\scripts musi istniec, inaczej wyrzuci blad.
+#
+# FORMAT SKRYPTU:
+#   # komentarz
+#   WAIT 500        pauza 500 ms na start
+#   MOVE x y        przesun kursor na wspolrzedne ekranu (px)
+#   DOWN / UP       wcisnij / zwolnij przycisk myszy
+#
+# WSKAZOWKI:
+#   - Najpierw zmierz pole rysowania (np. w Paincie), potem wpisz x0,y0,w,h.
+#   - Obraz moze miec dowolny rozmiar; --w i --h to tylko ramka,
+#     do ktorej sie wpisze (zachowane proporcje, wycentrowany).
+#   - Przy grubych kreskach kazda kreska daje 2 kontury (zewnetrzny
+#     i wewnetrzny), czyli linia bedzie narysowana podwojnie.
+#     Najlepiej uzyc cienkich linii albo wyskeletonizowac obraz.
+#   - Zacznij od malego testu: duze --eps (np. 3-5) daje krotki skrypt.
+#   - Kolejnosc konturow jest dowolna, bez optymalizacji trasy
+#     (dlugie przeskoki MOVE sa robione z UP, wiec nic nie rysuja).
 # obraz2skrypt.py - obrazek (czarne kreski na bialym) -> scripts\NAZWA.txt
 # Uzycie: python obraz2skrypt.py mysz.jpg mysz --x0 300 --y0 250 --w 600 --h 500
 # x0,y0 = lewy gorny rog obszaru rysowania na ekranie; w,h = jego rozmiar (px)
@@ -22,7 +69,7 @@ k = min(a.w / iw, a.h / ih)
 ox = a.x0 + (a.w - iw * k) / 2
 oy = a.y0 + (a.h - ih * k) / 2
 
-lines = [f"# {a.nazwa} z {os.path.basename(a.obraz)}", "WAIT 500"]
+lines = [f"# {a.nazwa} z {os.path.basename(a.obraz)}", "WAIT 1"]
 n = 0
 for c in cs:
     if cv2.arcLength(c, True) < a.min:

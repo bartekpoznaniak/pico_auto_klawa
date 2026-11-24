@@ -2,3 +2,4 @@
 scripts/kalibracja.txt
 scripts/mysz.txt
 __pycache__/
+*.jpg

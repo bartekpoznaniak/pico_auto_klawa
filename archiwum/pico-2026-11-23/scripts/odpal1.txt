@@ -1,0 +1,17 @@
+# odpal1
+# potwierdzenie komunikatu o klawiszach
+MOVE 947 520
+CLICK
+# okienko
+MOVE 1631 1221 
+CLICK
+TYPE 2418
+KEY ENTER
+HOTKEY GUI R
+WAIT 700
+TYPE brave
+KEY ENTER
+TYPE www 
+
+
+
