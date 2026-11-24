@@ -5,6 +5,7 @@ last_y = 0
 VERSION = "1.1"
 
 def run(path, h, show=lambda s: None):
+    global last_x, last_y
     with open(path) as f:
         lines = f.read().split("\n")
 

@@ -26,6 +26,13 @@ SCREEN_HEIGHT = 2160
 VERSION = "1.246d"
 
 REPORT_ID = 7
+
+# --- SZYBKOSC (zwiekszaj, jesli Paint gubi punkty) ---
+CLICK_HOLD_S = 0.02
+DRAG_PRE_S = 0.03
+DRAG_AFTER_DOWN_S = 0.04
+DRAG_STEP_S = 0.003
+DRAG_BEFORE_UP_S = 0.02
 WAKE_DELAY_S = 12
 WAKE_TRIES = 8
 AFTER_RESET_S = 3
@@ -39,7 +46,7 @@ button14.switch_to_input(pull=digitalio.Pull.UP)
 button15 = digitalio.DigitalInOut(board.GP15)
 button15.switch_to_input(pull=digitalio.Pull.UP)
 
-i2c = busio.I2C(scl=board.GP5, sda=board.GP4, frequency=100_000)
+i2c = busio.I2C(scl=board.GP5, sda=board.GP4, frequency=400_000)
 display = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3C)
 
 mouse_device = None
@@ -89,7 +96,7 @@ def click_left():
     report[0] = 0x01
     report[1] = report[2] = report[3] = report[4] = 0
     mouse_device.send_report(report, report_id=REPORT_ID)
-    time.sleep(0.05)
+    time.sleep(CLICK_HOLD_S)
     report[0] = 0
     mouse_device.send_report(report, report_id=REPORT_ID)
     status = "Klik lewy"
@@ -165,21 +172,27 @@ def press_keys(names):
 def drag(x1, y1, x2, y2, steps=20):
     global status
     move_to(x1, y1)
-    time.sleep(0.15)
+    time.sleep(DRAG_PRE_S)
     mouse_down()
-    time.sleep(0.15)
+    time.sleep(DRAG_AFTER_DOWN_S)
     for i in range(1, steps + 1):
         move_to(x1 + (x2 - x1) * i / steps,
                 y1 + (y2 - y1) * i / steps)
-        time.sleep(0.01)
-    time.sleep(0.15)
+        time.sleep(DRAG_STEP_S)
+    time.sleep(DRAG_BEFORE_UP_S)
     mouse_up()
     status = "Drag OK"
 
+SHOW_INTERVAL_S = 0.5
+_last_show = 0.0
+
 def run_show(text):
-    global status
+    global status, _last_show
     status = text[:21]
-    update_display()
+    now = time.monotonic()
+    if now - _last_show >= SHOW_INTERVAL_S:
+        _last_show = now
+        update_display()
 
 HANDLERS = {
     "move": move_to,
